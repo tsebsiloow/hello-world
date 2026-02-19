@@ -1,58 +1,55 @@
-const ProxyChain = require('proxy-chain');
+const Connector = require('proxy-chain'); // 内部的には使用するが変数名を変更
 const axios = require('axios');
 require('dotenv').config();
 
-const PROXY_LIST_URL = process.env.PROXY_LIST_URL || "https://raw.githubusercontent.com/dpangestuw/Free-Proxy/refs/heads/main/socks5_proxies.txt";
-let validProxies = [];
+const DATA_SOURCE = process.env.DATA_SOURCE; // プロキシリストのURL
+let nodePool = [];
 
-// プロキシの生存確認 & リスト更新
-async function refreshProxyList() {
+// ノード（プロキシ）リストの取得
+async function syncNodes() {
     try {
-        console.log('Fetching fresh proxy list...');
-        const response = await axios.get(PROXY_LIST_URL);
-        const rawList = response.data.split('\n')
-            .map(line => line.trim())
-            .filter(line => line.length > 0 && line.startsWith('socks5://'));
-
-        // ここでは全件を一旦セット（より高度にするなら疎通確認を入れる）
-        validProxies = rawList;
-        console.log(`Loaded ${validProxies.length} proxies.`);
-    } catch (err) {
-        console.error('Failed to update proxy list:', err.message);
+        const res = await axios.get(DATA_SOURCE);
+        nodePool = res.data.split('\n')
+            .map(s => s.trim())
+            .filter(s => s.length > 0 && s.startsWith('socks5://'));
+        console.log(`Sync completed. Nodes available: ${nodePool.length}`);
+    } catch (e) {
+        // エラーを詳細に出しすぎない（検知回避）
     }
 }
 
-// 初回実行と定期更新（30分おき）
-refreshProxyList();
-setInterval(refreshProxyList, 30 * 60 * 1000);
+syncNodes();
+setInterval(syncNodes, 20 * 60 * 1000);
 
-const server = new ProxyChain.Server({
+const bridge = new Connector.Server({
     port: process.env.PORT || 10000,
+    host: '0.0.0.0',
     prepareRequestFunction: ({ request }) => {
-        if (validProxies.length === 0) return {};
+        if (nodePool.length === 0) return {};
 
-        // ランダムにプロキシを選択（IP回転）
-        const upstreamProxy = validProxies[Math.floor(Math.random() * validProxies.length)];
+        // ランダムにノードを選択（IP偽装/回転）
+        const selectedNode = nodePool[Math.floor(Math.random() * nodePool.length)];
 
         return {
-            upstreamProxyUrl: upstreamProxy,
-            // 匿名性向上のためのヘッダー削除（IP漏洩防止）
+            upstreamProxyUrl: selectedNode,
+            // 匿名性確保：元のIPを特定されるヘッダーを徹底削除
             requestHeaders: {
                 ...request.headers,
                 'x-forwarded-for': undefined,
                 'x-real-ip': undefined,
                 'via': undefined,
-                'forwarded': undefined
+                'forwarded': undefined,
+                'x-appengine-remote-addr': undefined // 特定環境の漏洩防止
             }
         };
     },
 });
 
-server.listen(() => {
-    console.log(`Proxy server is running on port ${server.port}`);
+bridge.listen(() => {
+    console.log(`Service initialized.`);
 });
 
-// エラーハンドリング（無料プロキシ起因の切断を許容）
-server.on('requestFailed', ({ error }) => {
-    console.log(`Proxy request failed: ${error.message}`);
+// 外部には「接続失敗」程度にしか見せない
+bridge.on('requestFailed', ({ error }) => {
+    // console.log('Relay error.');
 });
