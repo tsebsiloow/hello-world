@@ -1,0 +1,14 @@
+{
+  "name": "ip-site",
+  "version": "1.0.0",
+  "description": "SOCKS5 Proxy with IP rotation and IP leak protection",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "axios": "^1.6.0",
+    "proxy-chain": "^2.3.0",
+    "dotenv": "^16.3.1"
+  }
+}
